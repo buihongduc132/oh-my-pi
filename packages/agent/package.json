@@ -31,8 +31,8 @@
 		"test": "bun test"
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-ai": "workspace:*",
-		"@oh-my-pi/pi-utils": "workspace:*"
+		"@oh-my-pi/pi-ai": "file:../pi-ai",
+		"@oh-my-pi/pi-utils": "file:../pi-utils"
 	},
 	"devDependencies": {
 		"@sinclair/typebox": "^0.34",

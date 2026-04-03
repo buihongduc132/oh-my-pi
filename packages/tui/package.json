@@ -33,8 +33,8 @@
 		"test": "bun test test/*.test.ts"
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-natives": "workspace:*",
-		"@oh-my-pi/pi-utils": "workspace:*",
+		"@oh-my-pi/pi-natives": "file:../pi-natives",
+		"@oh-my-pi/pi-utils": "file:../pi-utils",
 		"marked": "^17.0"
 	},
 	"devDependencies": {

@@ -38,7 +38,7 @@
 		"bench": "bun bench/grep.ts"
 	},
 	"dependencies": {
-		"@oh-my-pi/pi-utils": "workspace:*"
+		"@oh-my-pi/pi-utils": "file:../pi-utils"
 	},
 	"devDependencies": {
 		"@types/bun": "^1.3"
