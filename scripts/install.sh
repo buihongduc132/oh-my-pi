@@ -1,17 +1,19 @@
 #!/bin/sh
 set -e
 
-# OMP-Dev Coding Agent Installer (Node.js variant)
+# OMP-Dev Coding Agent Installer
 # Fork of oh-my-pi installer — installs as 'omp-dev', not 'omp'
+#
 # Usage: curl -fsSL https://raw.githubusercontent.com/buihongduc132/oh-my-pi/main/scripts/install.sh | sh
 #
 # Options:
-#   --nodejs       Force Node.js install (recommended for dev)
-#   --source       Install via bun (installs bun if needed)
-#   --bun          Explicitly install via bun
-#   --binary       Always install prebuilt binary
-#   --ref <ref>    Install specific tag/commit/branch
-#   -r <ref>       Shorthand for --ref
+#   --local [dir]   Install from already-cloned repo (default: current dir)  [dev workflow]
+#   --nodejs        Install from remote git ref using Node.js + tsx
+#   --source        Install from remote git ref using bun
+#   --bun           Alias for --source
+#   --binary        Download prebuilt binary from GitHub releases
+#   --ref <ref>     Install specific tag/commit/branch (used by --nodejs/--source)
+#   -r <ref>        Shorthand for --ref
 
 REPO="buihongduc132/oh-my-pi"
 PACKAGE="@oh-my-pi/pi-coding-agent-dev"
@@ -21,19 +23,25 @@ MIN_BUN_VERSION="1.3.7"
 
 # Parse arguments
 MODE=""
+LOCAL_DIR=""
 REF=""
 while [ $# -gt 0 ]; do
     case "$1" in
+        --local)
+            MODE="local"
+            shift
+            # Next arg is the local path if it doesn't start with -
+            if [ -n "$1" ] && [ "${1#-}" = "$1" ]; then
+                LOCAL_DIR="$1"
+                shift
+            fi
+            ;;
         --nodejs)
             MODE="nodejs"
             shift
             ;;
-        --source)
+        --source|--bun)
             MODE="source"
-            shift
-            ;;
-        --bun)
-            MODE="bun"
             shift
             ;;
         --binary)
@@ -73,19 +81,36 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# If a ref is provided, default to nodejs install
-if [ -n "$REF" ] && [ -z "$MODE" ]; then
-    MODE="nodejs"
+# Defaults: auto-detect best mode
+if [ -z "$MODE" ]; then
+    if [ -d ".git" ] && [ -d "packages/coding-agent" ]; then
+        # Inside the repo — use local install
+        LOCAL_DIR="${LOCAL_DIR:-.}"
+        MODE="local"
+    elif [ -n "$REF" ]; then
+        # Has a ref — use source (nodejs+git)
+        MODE="source"
+    else
+        # No ref, no local repo — binary is safest
+        MODE="binary"
+    fi
 fi
 
-# Check if node is available
+# -------------------------------------------------------------------
 has_node() {
     command -v node >/dev/null 2>&1
 }
 
-# Check if bun is available
 has_bun() {
     command -v bun >/dev/null 2>&1
+}
+
+has_git() {
+    command -v git >/dev/null 2>&1
+}
+
+has_git_lfs() {
+    command -v git-lfs >/dev/null 2>&1
 }
 
 version_ge() {
@@ -104,16 +129,10 @@ version_ge() {
     minimum_patch="${minimum_rest#*.}"
     minimum_patch="${minimum_patch%%.*}"
 
-    if [ "$current_major" -ne "$minimum_major" ]; then
-        [ "$current_major" -gt "$minimum_major" ]
-        return $?
-    fi
-
-    if [ "$current_minor" -ne "$minimum_minor" ]; then
-        [ "$current_minor" -gt "$minimum_minor" ]
-        return $?
-    fi
-
+    [ "$current_major" -gt "$minimum_major" ] && return 0
+    [ "$current_major" -lt "$minimum_major" ] && return 1
+    [ "$current_minor" -gt "$minimum_minor" ] && return 0
+    [ "$current_minor" -lt "$minimum_minor" ] && return 1
     [ "$current_patch" -ge "$minimum_patch" ]
 }
 
@@ -127,13 +146,20 @@ require_node_version() {
     echo "Using Node.js: ${version_raw}"
 }
 
+install_bun() {
+    echo "Installing bun..."
+    if command -v bash >/dev/null 2>&1; then
+        curl -fsSL https://bun.sh/install | bash
+    else
+        curl -fsSL https://bun.sh/install | sh
+    fi
+    export BUN_INSTALL="$HOME/.bun"
+    export PATH="$BUN_INSTALL/bin:$PATH"
+    require_bun_version
+}
+
 require_bun_version() {
     version_raw=$(bun --version 2>/dev/null || true)
-    if [ -z "$version_raw" ]; then
-        echo "Failed to read bun version"
-        exit 1
-    fi
-
     version_clean=${version_raw%%-*}
     if ! version_ge "$version_clean" "$MIN_BUN_VERSION"; then
         echo "Bun ${MIN_BUN_VERSION} or newer is required. Current version: ${version_clean}"
@@ -142,62 +168,53 @@ require_bun_version() {
     fi
 }
 
-# Check if git is available
-has_git() {
-    command -v git >/dev/null 2>&1
-}
+# -------------------------------------------------------------------
+# Mode: local — install from already-cloned repo
+# -------------------------------------------------------------------
+install_via_local() {
+    TARGET_DIR="$(cd "${LOCAL_DIR:-.}" && pwd)"
 
-# Install bun
-install_bun() {
-    echo "Installing bun..."
-    if command -v bash >/dev/null 2>&1; then
-        curl -fsSL https://bun.sh/install | bash
-    else
-        echo "bash not found; attempting install with sh..."
-        curl -fsSL https://bun.sh/install | sh
-    fi
-    export BUN_INSTALL="$HOME/.bun"
-    export PATH="$BUN_INSTALL/bin:$PATH"
-    require_bun_version
-}
-
-# Check if git-lfs is available
-has_git_lfs() {
-    command -v git-lfs >/dev/null 2>&1
-}
-
-# Install via Node.js + tsx
-install_via_nodejs() {
-    echo "Installing via Node.js..."
-    if ! has_node; then
-        echo "Node.js not found."
-        echo "Install Node.js at https://nodejs.org"
+    if [ ! -d "$TARGET_DIR/packages/coding-agent" ]; then
+        echo "Error: $TARGET_DIR does not contain packages/coding-agent"
+        echo "Run --local from inside the cloned oh-my-pi repo,"
+        echo "or: --local /path/to/oh-my-pi"
         exit 1
     fi
-    require_node_version
 
+    echo "Installing from local source: $TARGET_DIR"
+    echo "Installing dependencies..."
+    (cd "$TARGET_DIR" && npm install) || bun install --prefix "$TARGET_DIR" || {
+        echo "Failed to install dependencies"
+        exit 1
+    }
+
+    echo "Creating global symlink..."
+    mkdir -p "$HOME/.local/bin"
+    ln -sf "$TARGET_DIR/packages/coding-agent/src/cli.ts" "$HOME/.local/bin/$BINARY_NAME"
+
+    echo ""
+    echo "✓ Installed $BINARY_NAME to ~/.local/bin/$BINARY_NAME"
+    echo "Run '$BINARY_NAME' to get started!"
+}
+
+# -------------------------------------------------------------------
+# Mode: source — clone git ref then install via bun or npm
+# -------------------------------------------------------------------
+install_via_source() {
+    if ! has_git; then
+        echo "git is required for --ref installs"
+        exit 1
+    fi
+
+    echo "Cloning $REPO (ref: ${REF:-main})..."
     TMP_DIR="$(mktemp -d)"
     trap 'rm -rf "$TMP_DIR"' EXIT
 
-    if [ -n "$REF" ]; then
-        if ! has_git; then
-            echo "git is required for --ref when installing from source"
-            exit 1
-        fi
-
-        if git clone --depth 1 --branch "$REF" "https://github.com/${REPO}.git" "$TMP_DIR" >/dev/null 2>&1; then
-            :
-        else
-            git clone "https://github.com/${REPO}.git" "$TMP_DIR"
-            (cd "$TMP_DIR" && git checkout "$REF")
-        fi
-    else
-        echo "Error: --nodejs mode requires --ref to specify a branch/tag/commit."
-        echo "Usage: --nodejs --ref <branch>"
-        exit 1
+    if ! git clone --depth 1 --branch "${REF:-main}" "https://github.com/${REPO}.git" "$TMP_DIR" 2>/dev/null; then
+        git clone "https://github.com/${REPO}.git" "$TMP_DIR"
+        (cd "$TMP_DIR" && git checkout "$REF")
     fi
 
-    # Pull LFS files
     if has_git_lfs; then
         (cd "$TMP_DIR" && git lfs pull)
     fi
@@ -208,69 +225,24 @@ install_via_nodejs() {
     fi
 
     echo "Installing dependencies..."
-    npm install --prefix "$TMP_DIR" 2>/dev/null || bun install --prefix "$TMP_DIR" || {
+    bun install --prefix "$TMP_DIR" || npm install --prefix "$TMP_DIR" || {
         echo "Failed to install dependencies"
         exit 1
     }
 
-    echo "Linking omp-dev globally..."
-    cd "$TMP_DIR/packages/coding-agent" && npm link --bin-name "$BINARY_NAME" || {
-        echo "npm link failed, trying manual symlink..."
-        mkdir -p "$HOME/.npm-global/bin"
-        ln -sf "$TMP_DIR/packages/coding-agent/src/cli.ts" "$HOME/.npm-global/bin/$BINARY_NAME"
-    }
+    echo "Linking $BINARY_NAME globally..."
+    mkdir -p "$HOME/.local/bin"
+    ln -sf "$TMP_DIR/packages/coding-agent/src/cli.ts" "$HOME/.local/bin/$BINARY_NAME"
+
     echo ""
-    echo "✓ Installed omp-dev via Node.js"
-    echo "Run 'omp-dev' to get started!"
+    echo "✓ Installed $BINARY_NAME to ~/.local/bin/$BINARY_NAME"
+    echo "Run '$BINARY_NAME' to get started!"
 }
 
-# Install via bun
-install_via_bun() {
-    echo "Installing via bun..."
-    if [ -n "$REF" ]; then
-        if ! has_git; then
-            echo "git is required for --ref when installing from source"
-            exit 1
-        fi
-
-        TMP_DIR="$(mktemp -d)"
-        trap 'rm -rf "$TMP_DIR"' EXIT
-
-        if git clone --depth 1 --branch "$REF" "https://github.com/${REPO}.git" "$TMP_DIR" >/dev/null 2>&1; then
-            :
-        else
-            git clone "https://github.com/${REPO}.git" "$TMP_DIR"
-            (cd "$TMP_DIR" && git checkout "$REF")
-        fi
-
-        # Pull LFS files
-        if has_git_lfs; then
-            (cd "$TMP_DIR" && git lfs pull)
-        fi
-
-        if [ ! -d "$TMP_DIR/packages/coding-agent" ]; then
-            echo "Expected package at ${TMP_DIR}/packages/coding-agent"
-            exit 1
-        fi
-
-        bun install -g "$TMP_DIR/packages/coding-agent" || {
-            echo "Failed to install from source"
-            exit 1
-        }
-    else
-        bun install -g "$PACKAGE" || {
-            echo "Failed to install $PACKAGE"
-            exit 1
-        }
-    fi
-    echo ""
-    echo "✓ Installed omp-dev via bun"
-    echo "Run 'omp-dev' to get started!"
-}
-
-# Install binary from GitHub releases
+# -------------------------------------------------------------------
+# Mode: binary — download prebuilt binary from GitHub releases
+# -------------------------------------------------------------------
 install_binary() {
-    # Detect platform
     OS="$(uname -s)"
     ARCH="$(uname -m)"
 
@@ -287,20 +259,20 @@ install_binary() {
     esac
 
     BINARY="omp-dev-${PLATFORM}-${ARCH}"
+
     # Get release tag
     if [ -n "$REF" ]; then
         echo "Fetching release $REF..."
-        if RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/tags/${REF}"); then
-            LATEST=$(echo "$RELEASE_JSON" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
-        else
+        RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/tags/${REF}") || {
             echo "Release tag not found: $REF"
-            echo "For branch/commit installs, use --nodejs or --source with --ref."
+            echo "For branch/commit installs, use --source with --ref."
             exit 1
-        fi
+        }
+        LATEST=$(echo "$RELEASE_JSON" | grep '"tag_name"' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
     else
         echo "Fetching latest release..."
         RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest")
-        LATEST=$(echo "$RELEASE_JSON" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+        LATEST=$(echo "$RELEASE_JSON" | grep '"tag_name"' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
     fi
 
     if [ -z "$LATEST" ]; then
@@ -310,69 +282,57 @@ install_binary() {
     echo "Using version: $LATEST"
 
     mkdir -p "$INSTALL_DIR"
-    # Download binary
-    BINARY_URL="https://github.com/${REPO}/releases/download/${LATEST}/${BINARY}"
+
     echo "Downloading ${BINARY}..."
-    curl -fsSL "$BINARY_URL" -o "${INSTALL_DIR}/omp-dev"
+    curl -fsSL "https://github.com/${REPO}/releases/download/${LATEST}/${BINARY}" \
+        -o "${INSTALL_DIR}/omp-dev"
     chmod +x "${INSTALL_DIR}/omp-dev"
-    downloaded_native=0
+
+    # Download native addon(s)
     if [ "$ARCH" = "x64" ]; then
         for variant in modern baseline; do
             NATIVE_ADDON="pi_natives.${PLATFORM}-${ARCH}-${variant}.node"
-            NATIVE_URL="https://github.com/${REPO}/releases/download/${LATEST}/${NATIVE_ADDON}"
             echo "Downloading ${NATIVE_ADDON}..."
-            curl -fsSL "$NATIVE_URL" -o "${INSTALL_DIR}/${NATIVE_ADDON}" || {
+            curl -fsSL "https://github.com/${REPO}/releases/download/${LATEST}/${NATIVE_ADDON}" \
+                -o "${INSTALL_DIR}/${NATIVE_ADDON}" || {
                 echo "Failed to download ${NATIVE_ADDON}"
                 exit 1
             }
-            downloaded_native=$((downloaded_native + 1))
         done
     else
         NATIVE_ADDON="pi_natives.${PLATFORM}-${ARCH}.node"
-        NATIVE_URL="https://github.com/${REPO}/releases/download/${LATEST}/${NATIVE_ADDON}"
         echo "Downloading ${NATIVE_ADDON}..."
-        curl -fsSL "$NATIVE_URL" -o "${INSTALL_DIR}/${NATIVE_ADDON}"
-        downloaded_native=1
+        curl -fsSL "https://github.com/${REPO}/releases/download/${LATEST}/${NATIVE_ADDON}" \
+            -o "${INSTALL_DIR}/${NATIVE_ADDON}"
     fi
-    echo ""
-    echo "✓ Installed omp-dev to ${INSTALL_DIR}/omp-dev"
-    echo "✓ Installed ${downloaded_native} native addon file(s) to ${INSTALL_DIR}"
 
-    # Check if in PATH
+    echo ""
+    echo "✓ Installed $BINARY_NAME to ${INSTALL_DIR}/$BINARY_NAME"
     case ":$PATH:" in
-        *":$INSTALL_DIR:"*) echo "Run 'omp-dev' to get started!" ;;
-        *) echo "Add ${INSTALL_DIR} to your PATH, then run 'omp-dev'" ;;
+        *":$INSTALL_DIR:"*) echo "Run '$BINARY_NAME' to get started!" ;;
+        *) echo "Add ${INSTALL_DIR} to your PATH, then run '$BINARY_NAME'" ;;
     esac
 }
 
-# Main logic
+# -------------------------------------------------------------------
+# Main dispatch
+# -------------------------------------------------------------------
 case "$MODE" in
-    nodejs)
-        install_via_nodejs
+    local)
+        install_via_local
         ;;
     source)
         if ! has_bun; then
             install_bun
         fi
         require_bun_version
-        install_via_bun
-        ;;
-    bun)
-        if ! has_bun; then
-            install_bun
-        fi
-        require_bun_version
-        install_via_bun
+        install_via_source
         ;;
     binary)
         install_binary
         ;;
     *)
-        # Default: use nodejs if available, otherwise binary
-        if has_node; then
-            install_via_nodejs
-        else
-            install_binary
-        fi
+        echo "Unknown mode: $MODE"
+        exit 1
         ;;
 esac
