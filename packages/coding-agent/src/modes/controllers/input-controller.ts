@@ -150,6 +150,9 @@ export class InputController {
 		for (const key of this.ctx.keybindings.getKeys("app.session.resume")) {
 			this.ctx.editor.setCustomKeyHandler(key, () => this.ctx.showSessionSelector());
 		}
+		for (const key of this.ctx.keybindings.getKeys("app.session.rename")) {
+			this.ctx.editor.setCustomKeyHandler(key, () => void this.handleSessionRename());
+		}
 		for (const key of this.ctx.keybindings.getKeys("app.message.followUp")) {
 			this.ctx.editor.setCustomKeyHandler(key, () => void this.handleFollowUp());
 		}
@@ -764,5 +767,19 @@ export class InputController {
 				}
 			});
 		}
+	}
+	/** Ctrl+R — rename the current session via the editor. Enter confirms, Esc cancels. */
+	async handleSessionRename(): Promise<void> {
+		const current = this.ctx.sessionManager.getSessionName() ?? "";
+		this.ctx.editor.setText(current);
+		this.ctx.editor.setCursorEnd();
+		this.ctx.requestRender();
+		await this.ctx.editor.waitForSubmit().catch(() => undefined);
+		const name = this.ctx.editor.getText().trim();
+		if (name && name !== current) {
+			await this.ctx.sessionManager.setSessionName(name);
+		}
+		this.ctx.editor.setText("");
+		this.ctx.requestRender();
 	}
 }

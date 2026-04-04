@@ -50,7 +50,7 @@ interface ToolCallInfo {
 	arguments: Record<string, unknown>;
 }
 
-class TreeList implements Component {
+export class TreeList implements Component {
 	#flatNodes: FlatNode[] = [];
 	#filteredNodes: FlatNode[] = [];
 	#selectedIndex = 0;
