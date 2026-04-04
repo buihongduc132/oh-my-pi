@@ -12,6 +12,10 @@ import { truncateToVisualLines } from "../modes/components/visual-truncate";
 import type { Theme } from "../modes/theme/theme";
 import bashDescription from "../prompts/tools/bash.md" with { type: "text" };
 import { DEFAULT_MAX_BYTES, TailBuffer } from "../session/streaming-output";
+
+/** Minimum ms between onUpdate calls during streaming to prevent TUI flickering. */
+const BASH_STREAM_THROTTLE_MS = 150;
+
 import { renderStatusLine } from "../tui";
 import { CachedOutputBlock } from "../tui/output-block";
 import { getSixelLineMask } from "../utils/sixel";
@@ -369,8 +373,26 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 							artifactPath,
 							artifactId,
 							onChunk: chunk => {
+								let lastUpdateMs = 0;
+								let pendingOutput: string | undefined;
+								let updatePending = false;
+								const flushUpdate = () => {
+									updatePending = false;
+									void reportProgress(pendingOutput ?? tailBuffer.text(), {
+										async: { state: "running", jobId, type: "bash" },
+									});
+								};
 								tailBuffer.append(chunk);
-								void reportProgress(tailBuffer.text(), { async: { state: "running", jobId, type: "bash" } });
+								pendingOutput = tailBuffer.text();
+								if (updatePending) return;
+								const now = Date.now();
+								if (now - lastUpdateMs >= BASH_STREAM_THROTTLE_MS) {
+									lastUpdateMs = now;
+									void reportProgress(pendingOutput, { async: { state: "running", jobId, type: "bash" } });
+								} else {
+									updatePending = true;
+									setTimeout(flushUpdate, BASH_STREAM_THROTTLE_MS - (now - lastUpdateMs));
+								}
 							},
 						});
 						const outputText = this.#formatResultOutput(result, headLines, tailLines);
@@ -421,12 +443,25 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 					artifactPath,
 					artifactId,
 					onChunk: chunk => {
+						let lastUpdateMs = 0;
+						let pendingOutput: string | undefined;
+						let updatePending = false;
+						const flushUpdate = () => {
+							updatePending = false;
+							if (onUpdate && pendingOutput !== undefined) {
+								onUpdate({ content: [{ type: "text", text: pendingOutput }], details: {} });
+							}
+						};
 						tailBuffer.append(chunk);
-						if (onUpdate) {
-							onUpdate({
-								content: [{ type: "text", text: tailBuffer.text() }],
-								details: {},
-							});
+						pendingOutput = tailBuffer.text();
+						if (updatePending) return;
+						const now = Date.now();
+						if (now - lastUpdateMs >= BASH_STREAM_THROTTLE_MS) {
+							lastUpdateMs = now;
+							if (onUpdate) onUpdate({ content: [{ type: "text", text: pendingOutput }], details: {} });
+						} else {
+							updatePending = true;
+							setTimeout(flushUpdate, BASH_STREAM_THROTTLE_MS - (now - lastUpdateMs));
 						}
 					},
 				});

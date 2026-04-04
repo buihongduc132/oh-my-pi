@@ -93,7 +93,7 @@ namespace Snowflake {
 	// Validates a snowflake hex string.
 	//
 	export function valid(value: string): value is Snowflake {
-		return value.length === 16 && PATTERN.test(value);
+		return typeof value === "string" && value.length === 16 && PATTERN.test(value);
 	}
 
 	// Returns the upper/lower boundaries for the given timestamp.

@@ -33,6 +33,7 @@
 	},
 	"scripts": {
 		"check": "tsgo -p tsconfig.json",
+		"coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=../../coverage",
 		"generate-models": "bun scripts/generate-models.ts",
 		"test": "bun test"
 	},

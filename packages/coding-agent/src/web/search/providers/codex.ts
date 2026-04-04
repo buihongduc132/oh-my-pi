@@ -164,7 +164,7 @@ function buildCodexHeaders(accessToken: string, accountId: string): Record<strin
 		"chatgpt-account-id": accountId,
 		"OpenAI-Beta": "responses=experimental",
 		originator: "pi",
-		"User-Agent": `pi/${packageJson.version} (${os.platform()} ${os.release()}; ${os.arch()})`,
+		"User-Agent": `pi/${(packageJson as any).version} (${os.platform()} ${os.release()}; ${os.arch()})`,
 		Accept: "text/event-stream",
 		"Content-Type": "application/json",
 	};

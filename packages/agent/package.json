@@ -28,6 +28,7 @@
 	"types": "./src/index.ts",
 	"scripts": {
 		"check": "tsgo -p tsconfig.json",
+		"coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=../../coverage",
 		"test": "bun test"
 	},
 	"dependencies": {

@@ -140,7 +140,7 @@ jobs:
           sudo ln -sf /usr/bin/convert /usr/local/bin/magick
       - run: bun install --frozen-lockfile
       - run: bun --cwd=packages/natives run build:native
-      - run: bun run test
+      - run: bun run coverage:ci
       - name: CLI smoke test
         run: |
           bun packages/coding-agent/src/cli.ts --version
