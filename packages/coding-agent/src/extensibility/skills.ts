@@ -114,14 +114,14 @@ export async function loadSkills(options: LoadSkillsOptions = {}): Promise<LoadS
 
 	// Check if skill name matches any of the include patterns
 	function matchesIncludePatterns(name: string): boolean {
-		if (includeSkills.length === 0) return true;
-		return includeSkills.some(pattern => new Bun.Glob(pattern).match(name));
+		if ((includeSkills ?? []).length === 0) return true;
+		return (includeSkills ?? []).some(pattern => new Bun.Glob(pattern).match(name));
 	}
 
 	// Check if skill name matches any of the ignore patterns
 	function matchesIgnorePatterns(name: string): boolean {
-		if (ignoredSkills.length === 0) return false;
-		return ignoredSkills.some(pattern => new Bun.Glob(pattern).match(name));
+		if ((ignoredSkills ?? []).length === 0) return false;
+		return (ignoredSkills ?? []).some(pattern => new Bun.Glob(pattern).match(name));
 	}
 
 	const disabledSkillNames = new Set(
