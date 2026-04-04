@@ -23,6 +23,8 @@ import { join, relative, extname, basename, dirname } from "node:path";
 import { cwd } from "node:process";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+	import { unlinkSync } from "node:fs";
+
 
 function run(cmd, args, opts = {}) {
 	return spawnSync(cmd, args, {
@@ -185,6 +187,8 @@ function runTestsForChangedFiles(stagedSrcFiles) {
 
 	// Read coverage report and enforce ≥ 50 % per-file for touched logic files
 	const lcovPath = join(ROOT, "coverage", "lcov.info");
+	// Delete stale lcov data so we only read coverage from the current run
+	if (existsSync(lcovPath)) unlinkSync(lcovPath);
 	if (existsSync(lcovPath)) {
 		const lcov = readFileSync(lcovPath, "utf8");
 		const lines = lcov.split("\n");
@@ -255,6 +259,7 @@ function runTestsForChangedFiles(stagedSrcFiles) {
 
 function checkOverallCoverage() {
 	const lcovPath = join(ROOT, "coverage", "lcov.info");
+	if (existsSync(lcovPath)) unlinkSync(lcovPath);
 	if (!existsSync(lcovPath)) {
 		console.log("\n⚠️  No coverage report found — skipping overall coverage check.");
 		return true;
