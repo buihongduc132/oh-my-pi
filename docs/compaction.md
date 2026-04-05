@@ -91,7 +91,6 @@ What the LLM sees:
     prompt   from cmp          messages from firstKeptEntryId
 ```
 
-
 ### Overflow-retry vs threshold compaction
 
 The two automatic paths are intentionally different:
@@ -195,6 +194,57 @@ Remote summarization mode:
   - `{ systemPrompt, prompt }`
 - Expects JSON containing at least `{ summary }`.
 
+### Custom prompt via settings
+
+TZ:
+BP:Compaction summarization prompts can be customized via two settings:
+BX:
+BV:- `compaction.summarizationPrompt` — prompt for initial summarization
+XZ:- `compaction.updatePrompt` — prompt for incremental updates (when a previous summary exists)
+BV:
+VN:Both support three value forms:
+JV:
+JV:**1. Raw string** (default when unset):
+JZ:
+VN:`yaml
+XZ:compaction:
+VN:  summarizationPrompt: |
+BP:    You are a context summarization assistant...
+VN:`
+BR:
+JV:**2. File reference** — use `{file:<path>}` to load prompt content from a file:
+JZ:
+VN:`yaml
+XZ:compaction:
+VN:  summarizationPrompt: "{file:.omp/prompts/compaction-summary.md}"
+VN:  updatePrompt: "{file:.omp/prompts/compaction-update-summary.md}"
+VN:`
+BR:
+BP:The path is resolved relative to the current project root (cwd). The file is read at compaction time. If the file does not exist, an error is logged and the bundled default prompt is used instead.
+BR:
+JV:**3. Environment variable** — use `{env:VARIABLE_NAME}` to substitute an environment variable:
+JZ:
+VN:`yaml
+XZ:compaction:
+VN:  summarizationPrompt: "{env:OMP_COMPACTION_PROMPT}"
+VN:`
+BR:
+BP:If the environment variable is not set, it is replaced with an empty string (which will fall back to the bundled prompt).
+BR:
+BP:Variables and file references can be combined in a single string:
+JV:
+VN:`yaml
+XZ:compaction:
+VN:  summarizationPrompt: "{env:OMP_COMPACTION_PREFIX}"
+VN:  updatePrompt: "{file:{env:OMP_PROMPT_DIR}/compaction-update.md}"
+VN:`
+JV:
+NQ:The `{file:...}` and `{env:...}` substitution is applied to **all** string-valued settings (not just compaction prompts) at the point of use, so this mechanism also applies to custom instructions passed via hooks, extension config, and other string settings.
+VN:
+VN:Implementation note: the substitution is performed in `packages/coding-agent/src/session/compaction/compaction.ts` before the prompt string is passed to `generateSummary()`. The bundled `.md` files under `src/prompts/compaction/` remain as built-in defaults.
+VN:
+BQ:
+
 ### File-operation context in summaries
 
 Compaction tracks cumulative file activity using assistant tool calls:
@@ -261,7 +311,6 @@ After navigation with summary:
     A ───┤
          └─ E ─ F (new leaf)
 ```
-
 
 ### Preparation and token budget
 
@@ -350,6 +399,11 @@ From `settings-schema.ts`:
 - `compaction.keepRecentTokens` = `20000`
 - `compaction.autoContinue` = `true`
 - `compaction.remoteEndpoint` = `undefined`
+- `compaction.summarizationPrompt` = `undefined` (raw string or `{file:...}` / `{env:...}` reference)
+- `compaction.updatePrompt` = `undefined` (raw string or `{file:...}` / `{env:...}` reference)
+- `compaction.idleEnabled` = `false`
+- `compaction.idleThresholdTokens` = `200000`
+- `compaction.idleTimeoutSeconds` = `300`
 - `branchSummary.enabled` = `false`
 - `branchSummary.reserveTokens` = `16384`
 

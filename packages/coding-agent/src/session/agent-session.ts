@@ -3505,7 +3505,7 @@ export class AgentSession {
 
 			const pathEntries = this.sessionManager.getBranch();
 
-			const preparation = prepareCompaction(pathEntries, compactionSettings);
+			const preparation = prepareCompaction(pathEntries, compactionSettings, this.sessionManager.getCwd());
 			if (!preparation) {
 				// Check why we can't compact
 				const lastEntry = pathEntries[pathEntries.length - 1];
@@ -4498,7 +4498,7 @@ export class AgentSession {
 
 			const pathEntries = this.sessionManager.getBranch();
 
-			const preparation = prepareCompaction(pathEntries, compactionSettings);
+			const preparation = prepareCompaction(pathEntries, compactionSettings, this.sessionManager.getCwd());
 			if (!preparation) {
 				await this.#emitSessionEvent({
 					type: "auto_compaction_end",
