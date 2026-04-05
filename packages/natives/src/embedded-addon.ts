@@ -1,3 +1,6 @@
+import addonPath0 from "../native/pi_natives.linux-x64-modern.node" with { type: "file" };
+import addonPath1 from "../native/pi_natives.linux-x64-baseline.node" with { type: "file" };
+
 export type EmbeddedAddonVariant = "modern" | "baseline" | "default";
 
 export interface EmbeddedAddonFile {
@@ -12,4 +15,11 @@ export interface EmbeddedAddon {
 	files: EmbeddedAddonFile[];
 }
 
-export const embeddedAddon: EmbeddedAddon | null = null;
+export const embeddedAddon: EmbeddedAddon | null = {
+	platformTag: "linux-x64",
+	version: "13.18.0",
+	files: [
+	{ variant: "modern", filename: "pi_natives.linux-x64-modern.node", filePath: addonPath0 },
+	{ variant: "baseline", filename: "pi_natives.linux-x64-baseline.node", filePath: addonPath1 },
+	],
+};
