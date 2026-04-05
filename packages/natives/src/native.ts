@@ -33,7 +33,42 @@ type CpuVariant = "modern" | "baseline";
 const require = createRequire(import.meta.url);
 const platformTag = `${process.platform}-${process.arch}`;
 const packageVersion = (packageJson as { version: string }).version;
-const nativeDir = path.join(import.meta.dir, "..", "native");
+
+// ─── Workspace binary resolution ───────────────────────────────────────────
+//
+// OMP_WORKSPACE_ROOT is set by the omp-dev launcher. It gives native.ts an
+// unambiguous path to the workspace root so it can always resolve:
+//   <workspace>/packages/natives/native/       (source dev binaries)
+//   <workspace>/node_modules/.bin/              (bundled binaries alongside exec)
+//
+// Without it, we fall back to:
+//   import.meta.dir relative paths  (works in normal installs)
+//   execDir                           (works for compiled binaries)
+//
+// This is the ROOT CAUSE FIX for:
+//   - omp-dev failing when cwd is outside the workspace
+//     (import.meta.dir was wrong when running from packages/coding-agent/)
+//   - TLS block exhaustion from global npm binaries
+//     (OMP_WORKSPACE_ROOT forces workspace binaries to be tried FIRST,
+//      before the global npm path that has the broken .node files)
+
+function resolveWorkspaceRoot(): string | null {
+	const envRoot = Bun.env.OMP_WORKSPACE_ROOT;
+	if (envRoot && path.isAbsolute(envRoot)) return envRoot;
+
+	// Auto-detect: walk up from import.meta.dir looking for packages/natives/native/
+	let dir = import.meta.dir;
+	for (let i = 0; i < 8; i++) {
+		if (fs.existsSync(path.join(dir, "packages", "natives", "native"))) return dir;
+		const parent = path.dirname(dir);
+		if (parent === dir) break;
+		dir = parent;
+	}
+	return null;
+}
+
+const workspaceRoot = resolveWorkspaceRoot();
+
 const execDir = path.dirname(process.execPath);
 const versionedDir = path.join(getNativesDir(), packageVersion);
 const userDataDir =
@@ -45,12 +80,21 @@ const isCompiledBinary =
 	import.meta.url.includes("$bunfs") ||
 	import.meta.url.includes("~BUN") ||
 	import.meta.url.includes("%7EBUN");
+
+// Compute nativeDir from workspace root when known (most reliable for dev).
+const _nativeDirFallback = path.join(import.meta.dir, "..", "native");
+const nativeDir = workspaceRoot ? path.join(workspaceRoot, "packages", "natives", "native") : _nativeDirFallback;
 const SUPPORTED_PLATFORMS = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64"];
 
 const variantOverride = getVariantOverride();
 const selectedVariant = resolveCpuVariant(variantOverride);
 const addonFilenames = getAddonFilenames(platformTag, selectedVariant);
 const addonLabel = selectedVariant ? `${platformTag} (${selectedVariant})` : platformTag;
+
+// ─── Candidate priority ─────────────────────────────────────────────────────
+// When OMP_WORKSPACE_ROOT is set, workspace binaries come FIRST so global npm
+// .node files (which have TLS block exhaustion on some Linux/Bun combos) are
+// never reached. This is the second half of the TLS root-cause fix.
 
 const debugCandidates = [path.join(nativeDir, "pi_natives.dev.node"), path.join(execDir, "pi_natives.dev.node")];
 const baseReleaseCandidates = addonFilenames.flatMap(filename => [
@@ -61,15 +105,32 @@ const compiledCandidates = addonFilenames.flatMap(filename => [
 	path.join(versionedDir, filename),
 	path.join(userDataDir, filename),
 ]);
+
+// When running via omp-dev (workspace root known), workspace binaries take
+// absolute priority — global npm path is only reached if workspace is missing.
+const workspaceCandidates = workspaceRoot
+	? addonFilenames.flatMap(filename => [
+			path.join(workspaceRoot, "packages", "natives", "native", filename),
+			path.join(workspaceRoot, "node_modules", ".bin", filename),
+		])
+	: [];
+
 const releaseCandidates = isCompiledBinary ? [...compiledCandidates, ...baseReleaseCandidates] : baseReleaseCandidates;
-const candidates = $env.PI_DEV ? [...debugCandidates, ...releaseCandidates] : releaseCandidates;
+const candidates = workspaceRoot
+	? [...workspaceCandidates, ...($env.PI_DEV ? [...debugCandidates, ...releaseCandidates] : releaseCandidates)]
+	: $env.PI_DEV
+		? [...debugCandidates, ...releaseCandidates]
+		: releaseCandidates;
 const dedupedCandidates = [...new Set(candidates)];
 
 function runCommand(command: string, args: string[]): string | null {
 	const cmdLine = `${command} '${args.join(" ")}'`;
 	return logger.time(`runCommand:${cmdLine}`, () => {
 		try {
-			const result = Bun.spawnSync([command, ...args], { stdout: "pipe", stderr: "pipe" });
+			const result = Bun.spawnSync([command, ...args], {
+				stdout: "pipe",
+				stderr: "pipe",
+			});
 			if (result.exitCode !== 0) return null;
 			return result.stdout.toString("utf-8").trim();
 		} catch {
@@ -138,7 +199,10 @@ function getAddonFilenames(tag: string, variant: CpuVariant | null): string[] {
 	return [baselineFilename, defaultFilename];
 }
 
-function selectEmbeddedAddonFile(): { filename: string; filePath: string } | null {
+function selectEmbeddedAddonFile(): {
+	filename: string;
+	filePath: string;
+} | null {
 	if (!embeddedAddon) return null;
 	const defaultFile = embeddedAddon.files.find(file => file.variant === "default") ?? null;
 	if (process.arch !== "x64") return defaultFile ?? embeddedAddon.files[0] ?? null;

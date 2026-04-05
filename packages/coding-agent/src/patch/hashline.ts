@@ -301,6 +301,11 @@ export async function* streamHashLinesFromLines(
  * @throws Error if the format is invalid (not `NUMBER#HEXHASH`)
  */
 export function parseTag(ref: string): { line: number; hash: string } {
+	// Guard: reject display-format lines pasted into anchor fields FIRST.
+	// Must run before the regex because the base regex throws on hash-only forms
+	// like '#WQ:bar' before the guard could ever evaluate.
+	validateAnchorFormat(ref);
+
 	// This regex captures:
 	//  1. optional leading ">+" and whitespace
 	//  2. line number (1+ digits)
@@ -319,6 +324,51 @@ export function parseTag(ref: string): { line: number; hash: string } {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Guard: reject display-format anchors that bleed into anchor fields
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Detect if a string looks like a hashline display line rather than a bare anchor.
+ * Models occasionally copy `LINE#ID:content` from read output into tool fields
+ * (loc.anchor, range.pos, range.end). The `:content` portion is not valid in an
+ * anchor and would be silently dropped, making the model think the anchor is
+ * correct when in fact it includes trailing garbage.
+ * This fires only when a non-whitespace colon appears after the 2-char hash.
+ */
+function looksLikeDisplayFormat(ref: string): boolean {
+	const stripped = ref.replace(/^\s*[>+-]+\s*/, "");
+	// Pattern 1: N#ID:content  (numbered display prefix)
+	const m1 = stripped.match(/^\s*\d+\s*#\s*[ZPMQVRWSNKTXJBYH]{2}(.*)$/);
+	if (m1) return /^:\S/.test(m1[1]);
+	// Pattern 2: #ID:content  (hash-only display prefix)
+	// Two hash chars (#WQ:bar) OR three hash chars (#ZPM:bar) are both display format.
+	// For 3-char form: hash=ZQ, content=M:bar — still invalid anchor content.
+	const m2 = stripped.match(/^\s*#\s*[ZPMQVRWSNKTXJBYH]{2,3}(.*)$/);
+	if (m2) return /^:\S/.test(m2[1]);
+	return false;
+}
+
+/**
+ * Error thrown when a hashline anchor looks like a display-prefix line.
+ * Models sometimes paste `LINE#ID:content` from read output into an anchor field.
+ * The stray `:content` would be silently dropped by parseTag, and if the
+ * hash happens to match the real line hash, the edit targets the wrong line.
+ */
+export class DisplayFormatAnchorError extends Error {
+	constructor(public readonly anchor: string) {
+		super(
+			`Anchor "${anchor}" looks like a hashline display prefix (contains ':' after the hash ID). ` +
+				`Anchors must be plain "LINE#ID" without a trailing colon or content. ` +
+				`Did you accidentally copy a display-format line from read output into an anchor field?`,
+		);
+		this.name = "DisplayFormatAnchorError";
+	}
+}
+
+function validateAnchorFormat(ref: string): void {
+	if (looksLikeDisplayFormat(ref)) throw new DisplayFormatAnchorError(ref);
+}
+
 // Hash Mismatch Error
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -786,7 +836,13 @@ function parseNumberedDiffLine(line: string): ParsedNumberedDiffLine | undefined
 	const lineNumber = Number(lineField.trim());
 	if (!Number.isInteger(lineNumber)) return undefined;
 
-	return { kind, lineNumber, lineWidth: lineField.length, content: match[3], raw: line };
+	return {
+		kind,
+		lineNumber,
+		lineWidth: lineField.length,
+		content: match[3],
+		raw: line,
+	};
 }
 
 function syncOldLineCounters(counters: CompactPreviewCounters, lineNumber: number): void {

@@ -41,6 +41,7 @@ import {
 	applyHashlineEdits,
 	buildCompactHashlineDiffPreview,
 	computeLineHash,
+	DisplayFormatAnchorError,
 	type HashlineEdit,
 	parseTag,
 } from "./hashline";
@@ -328,7 +329,8 @@ function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
 function tryParseTag(raw: string): Anchor | undefined {
 	try {
 		return parseTag(raw);
-	} catch {
+	} catch (err) {
+		if (err instanceof DisplayFormatAnchorError) throw err;
 		return undefined;
 	}
 }
