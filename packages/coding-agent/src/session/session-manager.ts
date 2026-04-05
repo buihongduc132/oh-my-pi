@@ -395,7 +395,10 @@ function encodeRelativeSessionDirName(prefix: string, root: string, cwd: string)
 	return relative ? (prefix.endsWith("-") ? `${prefix}${relative}` : `${prefix}-${relative}`) : prefix;
 }
 
-function getDefaultSessionDirName(cwd: string): { encodedDirName: string; resolvedCwd: string } {
+function getDefaultSessionDirName(cwd: string): {
+	encodedDirName: string;
+	resolvedCwd: string;
+} {
 	const resolvedCwd = path.resolve(cwd);
 	const canonicalCwd = resolveEquivalentPath(resolvedCwd);
 	const home = resolveEquivalentPath(os.homedir());
@@ -619,7 +622,10 @@ export function buildSessionContext(
 		const providerPayload: ProviderPayload | undefined = (() => {
 			const candidate = compaction.preserveData?.openaiRemoteCompaction;
 			if (!candidate || typeof candidate !== "object") return undefined;
-			const remote = candidate as { provider?: unknown; replacementHistory?: unknown };
+			const remote = candidate as {
+				provider?: unknown;
+				replacementHistory?: unknown;
+			};
 			if (typeof remote.provider !== "string" || remote.provider.length === 0) return undefined;
 			if (!Array.isArray(remote.replacementHistory)) return undefined;
 			return {
@@ -1270,7 +1276,13 @@ async function collectSessionsFromFiles(files: string[], storage: SessionStorage
 				if (entries.length === 0) return;
 
 				// Check first entry for valid session header
-				type SessionHeaderShape = { type: string; id: string; cwd?: string; title?: string; timestamp: string };
+				type SessionHeaderShape = {
+					type: string;
+					id: string;
+					cwd?: string;
+					title?: string;
+					timestamp: string;
+				};
 				const header = entries[0] as SessionHeaderShape;
 				if (header.type !== "session" || !header.id) return;
 
@@ -1280,7 +1292,11 @@ async function collectSessionsFromFiles(files: string[], storage: SessionStorage
 				let shortSummary: string | undefined;
 
 				for (let i = 1; i < entries.length; i++) {
-					const entry = entries[i] as { type?: string; message?: Message; shortSummary?: string };
+					const entry = entries[i] as {
+						type?: string;
+						message?: Message;
+						shortSummary?: string;
+					};
 
 					if (entry.type === "compaction" && typeof entry.shortSummary === "string") {
 						shortSummary = entry.shortSummary;
@@ -1678,7 +1694,14 @@ export class SessionManager {
 		this.#leafId = null;
 		this.#flushed = false;
 		this.#needsFullRewriteOnNextPersist = false;
-		this.#usageStatistics = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, premiumRequests: 0, cost: 0 };
+		this.#usageStatistics = {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			premiumRequests: 0,
+			cost: 0,
+		};
 		this.#inMemoryArtifacts = null;
 		this.#inMemoryArtifactCounter = 0;
 
@@ -1694,7 +1717,14 @@ export class SessionManager {
 		this.#byId.clear();
 		this.#labelsById.clear();
 		this.#leafId = null;
-		this.#usageStatistics = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, premiumRequests: 0, cost: 0 };
+		this.#usageStatistics = {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			premiumRequests: 0,
+			cost: 0,
+		};
 		for (const entry of this.#fileEntries) {
 			if (entry.type === "session") continue;
 			this.#byId.set(entry.id, entry);

@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+
 ### Added
 
 - Added `edit.manageImports` setting to enable/disable post-edit import and include management
@@ -20,8 +21,8 @@
 - Added GitHub CLI utilities to git module (`utils/git.github`) with `available()`, `run()`, `json()`, and `text()` methods for GitHub CLI operations
 - Exported git utilities from main package entry point for use by extensions
 - Added comprehensive git utility module (`utils/git`) with organized namespaces for common git operations (branch, commit, diff, log, patch, ref, stage, status, head, repository)
-
-### Changed
+- Added Ctrl+R session rename feature via `onSessionRename` callback in `CustomEditor`
+- Added `bun run build:dev` script that embeds native addons and compiles `packages/coding-agent/binaries/omp-dev` with `PI_COMPILED=true`, producing a machine-wide dev binary with embedded native binaries
 
 - Updated edit tool prompts to document import management feature when enabled
 - Modified edit tool schemas to conditionally include `imports` parameter based on `edit.manageImports` setting
@@ -50,6 +51,7 @@
 - Fixed the plan review selector to support the external editor shortcut for opening and updating the current plan from the approval screen
 
 ## [13.18.0] - 2026-04-02
+
 ### Breaking Changes
 
 - Removed standalone `fetch` tool; URL fetching is now integrated into the `read` tool
@@ -72,6 +74,7 @@
 - Fixed `read` tool to properly handle `file://` URL scheme by converting to filesystem paths
 
 ## [13.17.5] - 2026-04-01
+
 ### Added
 
 - Added support for writing to ZIP archives using fflate library for cross-platform compatibility
@@ -85,6 +88,7 @@
 - Removed GhPrPushTool test case
 
 ## [13.17.4] - 2026-04-01
+
 ### Added
 
 - Support for writing to archive entries in `.tar`, `.tar.gz`, `.tgz`, and `.zip` files using `archive.ext:path/inside/archive` syntax
@@ -109,6 +113,7 @@
 - Updated `read` tool documentation to reflect archive support and usage patterns
 
 ## [13.17.2] - 2026-04-01
+
 ### Added
 
 - Added `/marketplace help` command to display usage guide for all marketplace operations
@@ -164,6 +169,7 @@
 - Fixed inline image rendering to cap image height and preserve multiplexer scrollback during terminal resizes ([#587](https://github.com/can1357/oh-my-pi/pull/587) by [@smileynet](https://github.com/smileynet))
 
 ## [13.17.1] - 2026-04-01
+
 ### Removed
 
 - Removed `code_search` tool for code snippet and documentation search
@@ -173,6 +179,7 @@
 - Fixed edit tool diff rendering to wrap long diff lines with continuation gutters instead of truncating them at terminal width ([#578](https://github.com/can1357/oh-my-pi/issues/578))
 - Fixed `--list-models` and `/model` provider filtering to hide models from disabled providers ([#588](https://github.com/can1357/oh-my-pi/issues/588))
 - Fixed edit tool diffstats to use diff-specific add/remove theme colors instead of success/error status colors ([#589](https://github.com/can1357/oh-my-pi/issues/589))
+
 ## [13.17.0] - 2026-03-30
 
 ### Added
@@ -225,6 +232,7 @@
 - Fixed `--model provider/id` resolving to wrong provider when model ID exists in multiple catalogs ([#560](https://github.com/can1357/oh-my-pi/issues/560))
 
 ## [13.16.4] - 2026-03-28
+
 ### Changed
 
 - Renamed hashline helper functions from `hlineref`/`hlinefull` to `href`/`hline` for brevity

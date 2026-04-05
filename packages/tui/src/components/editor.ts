@@ -65,7 +65,12 @@ function wordWrapLine(line: string, maxWidth: number): TextChunk[] {
 	const chunks: TextChunk[] = [];
 
 	// Split into tokens (words and whitespace runs)
-	const tokens: { text: string; startIndex: number; endIndex: number; isWhitespace: boolean }[] = [];
+	const tokens: {
+		text: string;
+		startIndex: number;
+		endIndex: number;
+		isWhitespace: boolean;
+	}[] = [];
 	let currentToken = "";
 	let tokenStart = 0;
 	let inWhitespace = false;
@@ -381,6 +386,7 @@ export class Editor implements Component, Focusable {
 	onChange?: (text: string) => void;
 	onAutocompleteCancel?: () => void;
 	disableSubmit: boolean = false;
+	#submitResolver?: (value: string) => void;
 
 	// Custom top border (for status line integration)
 	#topBorderContent?: EditorTopBorder;
@@ -582,7 +588,10 @@ export class Editor implements Component, Focusable {
 
 	#getStyledInputCursor(): { text: string; width: number } {
 		const cursorChar = this.#theme.symbols.inputCursor;
-		return { text: `\x1b[5m${cursorChar}\x1b[0m`, width: visibleWidth(cursorChar) };
+		return {
+			text: `\x1b[5m${cursorChar}\x1b[0m`,
+			width: visibleWidth(cursorChar),
+		};
 	}
 
 	#renderEndOfLineCursorAtWidthLimit(
@@ -746,7 +755,10 @@ export class Editor implements Component, Focusable {
 				if (hasCursor && !this.#useTerminalCursor) {
 					const zeroWidthCursorBudget = visibleWidth(gutterText);
 					const zeroWidthCursorReplacement = this.cursorOverride
-						? { text: this.cursorOverride, width: this.cursorOverrideWidth ?? 1 }
+						? {
+								text: this.cursorOverride,
+								width: this.cursorOverrideWidth ?? 1,
+							}
 						: this.#getStyledInputCursor();
 					if (showPromptGutter && zeroWidthCursorBudget > 0) {
 						// Keep the leading prompt glyph visible when the gutter consumes the whole row.
@@ -1610,7 +1622,17 @@ export class Editor implements Component, Focusable {
 		this.#undoStack.length = 0;
 
 		if (this.onChange) this.onChange("");
-		if (this.onSubmit) this.onSubmit(result);
+		if (this.#submitResolver) {
+			this.#submitResolver(result);
+			this.#submitResolver = undefined;
+		} else if (this.onSubmit) this.onSubmit(result);
+	}
+
+	/** Wait for the next Enter/Submit. Resolves with the submitted text. */
+	waitForSubmit(): Promise<string> {
+		return new Promise<string>(resolve => {
+			this.#submitResolver = resolve;
+		});
 	}
 
 	#handleBackspace(): void {
@@ -1685,7 +1707,11 @@ export class Editor implements Component, Focusable {
 	 * Shared by moveCursor() and pageScroll().
 	 */
 	#moveToVisualLine(
-		visualLines: Array<{ logicalLine: number; startCol: number; length: number }>,
+		visualLines: Array<{
+			logicalLine: number;
+			startCol: number;
+			length: number;
+		}>,
 		currentVisualLine: number,
 		targetVisualLine: number,
 	): void {
@@ -1849,7 +1875,10 @@ export class Editor implements Component, Focusable {
 
 	#recordKill(text: string, direction: "forward" | "backward", accumulate = this.#lastAction === "kill"): void {
 		if (!text) return;
-		this.#killRing.push(text, { prepend: direction === "backward", accumulate });
+		this.#killRing.push(text, {
+			prepend: direction === "backward",
+			accumulate,
+		});
 		this.#lastAction = "kill";
 	}
 
@@ -2149,7 +2178,11 @@ export class Editor implements Component, Focusable {
 	 * - length: length of this visual line segment
 	 */
 	#buildVisualLineMap(width: number): Array<{ logicalLine: number; startCol: number; length: number }> {
-		const visualLines: Array<{ logicalLine: number; startCol: number; length: number }> = [];
+		const visualLines: Array<{
+			logicalLine: number;
+			startCol: number;
+			length: number;
+		}> = [];
 
 		for (let i = 0; i < this.#state.lines.length; i++) {
 			const line = this.#state.lines[i] || "";
@@ -2178,7 +2211,13 @@ export class Editor implements Component, Focusable {
 	/**
 	 * Find the visual line index for the current cursor position.
 	 */
-	#findCurrentVisualLine(visualLines: Array<{ logicalLine: number; startCol: number; length: number }>): number {
+	#findCurrentVisualLine(
+		visualLines: Array<{
+			logicalLine: number;
+			startCol: number;
+			length: number;
+		}>,
+	): number {
 		for (let i = 0; i < visualLines.length; i++) {
 			const vl = visualLines[i];
 			if (!vl) continue;

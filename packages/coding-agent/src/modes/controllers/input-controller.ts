@@ -24,6 +24,7 @@ function isExpandable(obj: unknown): obj is Expandable {
 }
 
 export class InputController {
+	#renaming = false;
 	constructor(private ctx: InteractiveModeContext) {}
 
 	setupKeyHandlers(): void {
@@ -176,6 +177,7 @@ export class InputController {
 
 	setupEditorSubmitHandler(): void {
 		this.ctx.editor.onSubmit = async (text: string) => {
+			if (this.#renaming) return;
 			text = text.trim();
 
 			// Empty submit while streaming with queued messages: flush queues immediately
@@ -191,8 +193,13 @@ export class InputController {
 			if (text === "." || text === "c") {
 				if (this.ctx.onInputCallback) {
 					this.ctx.editor.setText("");
+					this.ctx.editor.onSessionRename = () => void this.handleSessionRename();
 					this.ctx.pendingImages = [];
-					this.ctx.onInputCallback({ text: "", cancelled: false, started: true });
+					this.ctx.onInputCallback({
+						text: "",
+						cancelled: false,
+						started: true,
+					});
 				}
 				return;
 			}
@@ -321,7 +328,10 @@ export class InputController {
 				this.ctx.editor.setText("");
 				const images = inputImages && inputImages.length > 0 ? [...inputImages] : undefined;
 				this.ctx.pendingImages = [];
-				await this.ctx.session.prompt(text, { streamingBehavior: "steer", images });
+				await this.ctx.session.prompt(text, {
+					streamingBehavior: "steer",
+					images,
+				});
 				this.ctx.updatePendingMessagesDisplay();
 				this.ctx.ui.requestRender();
 				return;
@@ -522,7 +532,11 @@ export class InputController {
 							data: imageData.data,
 							mimeType: imageData.mimeType,
 						});
-						imageData = { type: "image", data: resized.data, mimeType: resized.mimeType };
+						imageData = {
+							type: "image",
+							data: resized.data,
+							mimeType: resized.mimeType,
+						};
 					} catch {
 						// Keep the normalized image when resize fails.
 					}
@@ -716,7 +730,10 @@ export class InputController {
 				? [ttyHandle.fd, ttyHandle.fd, ttyHandle.fd]
 				: ["inherit", "inherit", "inherit"];
 
-			const result = await openInEditor(editorCmd, currentText, { extension: ".omp.md", stdio });
+			const result = await openInEditor(editorCmd, currentText, {
+				extension: ".omp.md",
+				stdio,
+			});
 			if (result !== null) {
 				this.ctx.editor.setText(result);
 			}
@@ -757,12 +774,24 @@ export class InputController {
 	}
 	/** Ctrl+R — rename the current session via the editor. Enter confirms, Esc cancels. */
 	async handleSessionRename(): Promise<void> {
+		this.#renaming = true;
 		const current = this.ctx.sessionManager.getSessionName() ?? "";
 		this.ctx.editor.setText(current);
 		this.ctx.editor.setCursorEnd();
 		this.ctx.requestRender();
-		await this.ctx.editor.waitForSubmit().catch(() => undefined);
-		const name = this.ctx.editor.getText().trim();
+		// Use disableSubmit + onSubmit to wait for Enter without
+		// triggering the message submit handler (which requires waitForSubmit).
+		const origOnSubmit = this.ctx.editor.onSubmit;
+		const renameResult = await new Promise<string>(resolve => {
+			this.ctx.editor.disableSubmit = true;
+			this.ctx.editor.onSubmit = (value: string) => {
+				this.ctx.editor.disableSubmit = false;
+				this.ctx.editor.onSubmit = origOnSubmit;
+				resolve(value.trim());
+			};
+		});
+		this.#renaming = false;
+		const name = renameResult;
 		if (name && name !== current) {
 			await this.ctx.sessionManager.setSessionName(name);
 		}

@@ -45,6 +45,7 @@ const DEFAULT_ACTION_KEYS: Record<ConfigurableEditorAction, KeyId[]> = {
  */
 export class CustomEditor extends Editor {
 	onEscape?: () => void;
+	onSessionRename?: () => void;
 	shouldBypassAutocompleteOnEscape?: () => boolean;
 	onClear?: () => void;
 	onExit?: () => void;
@@ -221,6 +222,13 @@ export class CustomEditor extends Editor {
 		// Intercept ? when editor is empty to show hotkeys
 		if (data === "?" && this.getText().length === 0 && this.onShowHotkeys) {
 			this.onShowHotkeys();
+			return;
+		}
+
+		// Intercept Ctrl+R for session rename
+		const code_val = data ? data.charCodeAt(0) : -1;
+		if (code_val === 18 && this.onSessionRename) {
+			this.onSessionRename();
 			return;
 		}
 
