@@ -27,6 +27,8 @@ import {
 	normalizeResponsesToolCallId,
 } from "@oh-my-pi/pi-ai/utils";
 import { logger } from "@oh-my-pi/pi-utils";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { renderPromptTemplate } from "../../config/prompt-templates";
 import compactionShortSummaryPrompt from "../../prompts/compaction/compaction-short-summary.md" with { type: "text" };
 import compactionSummaryPrompt from "../../prompts/compaction/compaction-summary.md" with { type: "text" };
@@ -142,7 +144,9 @@ export interface CompactionSettings {
 	autoContinue?: boolean;
 	remoteEnabled?: boolean;
 	remoteEndpoint?: string;
-}
+	summarizationPrompt?: string;
+	updatePrompt?: string;
+	};
 
 export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
 	enabled: true,
@@ -484,6 +488,39 @@ function formatAdditionalContext(context: string[] | undefined): string {
 	if (!context || context.length === 0) return "";
 	const lines = context.map(line => `- ${line}`).join("\n");
 	return `<additional-context>\n${lines}\n</additional-context>\n\n`;
+}
+
+/**
+ * Resolves substitution markers in a setting value string.
+ *
+ * Supports:
+ *   {file:<path>}   — reads file content relative to cwd
+ *   {env:<VAR>}     — substitutes environment variable
+ *   Nested: {file:{env:<VAR>}/path.txt}
+ *
+ * If no markers found → returns value as-is.
+ * If a file is missing → returns "" (caller falls back to bundled default).
+ * If an env var is missing → replaces with empty string.
+ */
+export function resolveSettingValue(value: string, cwd: string): string {
+	let resolved = value;
+
+	// First pass: resolve {env:...} markers (including nested inside {file:...})
+	resolved = resolved.replace(/\{env:([^}]+)\}/g, (_, varName) => {
+		return process.env[varName] ?? "";
+	});
+
+	// Second pass: resolve {file:...} markers
+	resolved = resolved.replace(/\{file:([^}]+)\}/g, (_, filePath) => {
+		const absolutePath = path.isAbsolute(filePath) ? filePath : path.join(cwd, filePath);
+		try {
+			return fs.readFileSync(absolutePath, "utf8");
+		} catch {
+			return "";
+		}
+	});
+
+	return resolved;
 }
 
 const OPENAI_REMOTE_COMPACTION_PRESERVE_KEY = "openaiRemoteCompaction";
@@ -953,7 +990,11 @@ export interface SummaryOptions {
 	remoteEndpoint?: string;
 	remoteInstructions?: string;
 	initiatorOverride?: MessageAttribution;
-}
+	/** Override for the initial summarization prompt (falls back to bundled prompt). */
+	summarizationPrompt?: string;
+	/** Override for the incremental update prompt (falls back to bundled prompt). */
+	updatePrompt?: string;
+};
 
 export async function generateSummary(
 	currentMessages: AgentMessage[],
@@ -968,9 +1009,13 @@ export async function generateSummary(
 	const maxTokens = Math.floor(0.8 * reserveTokens);
 
 	// Use update prompt if we have a previous summary, otherwise initial prompt
-	let basePrompt = previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
+	let basePrompt: string;
 	if (options?.promptOverride) {
 		basePrompt = options.promptOverride;
+	} else if (previousSummary) {
+		basePrompt = options?.updatePrompt ?? UPDATE_SUMMARIZATION_PROMPT;
+	} else {
+		basePrompt = options?.summarizationPrompt ?? SUMMARIZATION_PROMPT;
 	}
 	if (customInstructions) {
 		basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
@@ -1094,11 +1139,13 @@ export interface CompactionPreparation {
 	fileOps: FileOperations;
 	/** Compaction settions from settings.jsonl	*/
 	settings: CompactionSettings;
+	/** Working directory for resolving {file:<path>} relative paths in prompt settings */
+	cwd: string;
 }
 
 export function prepareCompaction(
-	pathEntries: SessionEntry[],
-	settings: CompactionSettings,
+	pathEntries: SessionEntry[],	settings: CompactionSettings,
+	cwd: string,
 ): CompactionPreparation | undefined {
 	if (pathEntries.length > 0 && pathEntries[pathEntries.length - 1].type === "compaction") {
 		return undefined;
@@ -1194,6 +1241,7 @@ export function prepareCompaction(
 		previousPreserveData,
 		fileOps,
 		settings,
+		cwd,
 	};
 }
 
@@ -1237,6 +1285,12 @@ export async function compact(
 		remoteEndpoint: settings.remoteEnabled === false ? undefined : settings.remoteEndpoint,
 		remoteInstructions: options?.remoteInstructions,
 		initiatorOverride: options?.initiatorOverride,
+		summarizationPrompt: settings.summarizationPrompt
+			? resolveSettingValue(settings.summarizationPrompt, preparation.cwd)
+			: undefined,
+		updatePrompt: settings.updatePrompt
+			? resolveSettingValue(settings.updatePrompt, preparation.cwd)
+			: undefined,
 	};
 
 	let preserveData = withOpenAiRemoteCompactionPreserveData(previousPreserveData, undefined);
