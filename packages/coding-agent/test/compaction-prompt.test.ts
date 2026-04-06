@@ -9,7 +9,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import * as ai from "@oh-my-pi/pi-ai";
 import { getBundledModel } from "@oh-my-pi/pi-ai/models";
 import type { AssistantMessage, Usage } from "@oh-my-pi/pi-ai/types";
-import { e2eApiKey } from "./utilities";
 
 import { generateSummary, type SummaryOptions } from "../src/session/compaction/compaction";
 
@@ -90,9 +89,10 @@ async function callGenerateSummary({
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("generateSummary prompt selection", () => {
-	let completeSimpleSpy: ReturnType<typeof vi.spyOn>;
-	let model: ReturnType<typeof getBundledModel>;
+describe("generateSummary", () => {
+	let completeSimpleSpy: ReturnType<typeof ai.completeSimple>;
+	// Initialize model at declaration so TypeScript infers the concrete type
+	let model = getBundledModel("anthropic", "claude-sonnet-4-5")!;
 
 	beforeEach(() => {
 		vi.restoreAllMocks();
@@ -114,6 +114,10 @@ describe("generateSummary prompt selection", () => {
 		const msgs = (call[1] as { messages: Array<{ content: Array<{ text: string }> }> }).messages;
 		return msgs[0]!.content[0]!.text;
 	}
+
+	// -------------------------------------------------------------------------
+	// Bundled default prompts
+	// -------------------------------------------------------------------------
 
 	it("uses bundled SUMMARIZATION_PROMPT when no previousSummary and no options", async () => {
 		const messages: AssistantMessage[] = [
@@ -300,29 +304,10 @@ describe("generateSummary prompt selection", () => {
 		expect(promptText).toContain("CUSTOM BASE PROMPT");
 		expect(promptText).toContain("src/main.ts");
 	});
-});
 
-describe("generateSummary priority chain", () => {
-	let completeSimpleSpy: ReturnType<typeof vi.spyOn>;
-	let model: ReturnType<typeof getBundledModel>;
-
-	beforeEach(() => {
-		vi.restoreAllMocks();
-		completeSimpleSpy = vi.spyOn(ai, "completeSimple");
-		model = getBundledModel("anthropic", "claude-sonnet-4-5")!;
-		if (!model) throw new Error("Model not found");
-	});
-
-	afterEach(() => {
-		vi.restoreAllMocks();
-	});
-
-	function getPromptText(): string {
-		expect(completeSimpleSpy).toHaveBeenCalledTimes(1);
-		const call = completeSimpleSpy.mock.calls[0]!;
-		const msgs = (call[1] as { messages: Array<{ content: Array<{ text: string }> }> }).messages;
-		return msgs[0]!.content[0]!.text;
-	}
+	// -------------------------------------------------------------------------
+	// Priority chain: summarizationPrompt / updatePrompt / promptOverride / bundled
+	// -------------------------------------------------------------------------
 
 	it("summarizationPrompt is used before bundled default (no previousSummary)", async () => {
 		const messages: AssistantMessage[] = [
@@ -422,7 +407,7 @@ describe("generateSummary priority chain", () => {
 		});
 
 		const promptText = getPromptText();
-		expect(getPromptText()).toContain("TOP_PRIORITY");
+		expect(promptText).toContain("TOP_PRIORITY");
 		expect(promptText).not.toContain("FALLBACK");
 	});
 

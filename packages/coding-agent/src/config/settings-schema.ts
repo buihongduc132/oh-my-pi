@@ -904,7 +904,7 @@ export const SETTINGS_SCHEMA = {
       tab: "context",
       label: "Compaction Summarization Prompt",
       description:
-        "Custom markdown prompt for generating compaction summaries. Uses bundled prompt when unset.",
+        "Custom markdown prompt for generating compaction summaries. Use a {file:<path>} reference to load from a static .md file. Uses bundled prompt when unset.",
     },
   },
 
@@ -915,7 +915,7 @@ export const SETTINGS_SCHEMA = {
       tab: "context",
       label: "Compaction Update Prompt",
       description:
-        "Custom markdown prompt for incremental updates to existing compaction summaries. Uses bundled prompt when unset.",
+        "Custom markdown prompt for incremental updates to existing compaction summaries. Use a {file:<path>} reference to load from a static .md file. Uses bundled prompt when unset.",
     },
   },
 

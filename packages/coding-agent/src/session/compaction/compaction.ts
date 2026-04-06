@@ -27,7 +27,6 @@ import {
 	normalizeResponsesToolCallId,
 } from "@oh-my-pi/pi-ai/utils";
 import { logger } from "@oh-my-pi/pi-utils";
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { renderPromptTemplate } from "../../config/prompt-templates";
 import compactionShortSummaryPrompt from "../../prompts/compaction/compaction-short-summary.md" with { type: "text" };
@@ -146,7 +145,7 @@ export interface CompactionSettings {
 	remoteEndpoint?: string;
 	summarizationPrompt?: string;
 	updatePrompt?: string;
-	};
+}
 
 export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
 	enabled: true,
@@ -419,7 +418,11 @@ export function findCutPoint(
 	const cutPoints = findValidCutPoints(entries, startIndex, endIndex);
 
 	if (cutPoints.length === 0) {
-		return { firstKeptEntryIndex: startIndex, turnStartIndex: -1, isSplitTurn: false };
+		return {
+			firstKeptEntryIndex: startIndex,
+			turnStartIndex: -1,
+			isSplitTurn: false,
+		};
 	}
 
 	// Walk backwards from newest, accumulating estimated message sizes
@@ -499,28 +502,90 @@ function formatAdditionalContext(context: string[] | undefined): string {
  *   Nested: {file:{env:<VAR>}/path.txt}
  *
  * If no markers found → returns value as-is.
- * If a file is missing → returns "" (caller falls back to bundled default).
+ * If a file is missing or traversal is blocked → returns "" (caller falls back to bundled default).
  * If an env var is missing → replaces with empty string.
+ *
+ * Path security: {file:...} resolves relative paths against cwd and rejects
+ * any resolved path that escapes cwd (no ../ traversal outside cwd, no absolute
+ * paths that are not inside cwd). This prevents untrusted project configs from
+ * exfiltrating arbitrary local files via {file:...} expansion.
  */
-export function resolveSettingValue(value: string, cwd: string): string {
-	let resolved = value;
+export async function resolveSettingValue(value: string, cwd: string): Promise<string> {
+	// Single pass: find all {env:...} and {file:...} markers with brace-depth tracking
+	// so that nested braces like {file:{env:VAR}/path.txt} are handled as one match.
+	type Marker = { start: number; end: number; promise: Promise<string> };
+	const markers: Marker[] = [];
 
-	// First pass: resolve {env:...} markers (including nested inside {file:...})
-	resolved = resolved.replace(/\{env:([^}]+)\}/g, (_, varName) => {
-		return process.env[varName] ?? "";
-	});
-
-	// Second pass: resolve {file:...} markers
-	resolved = resolved.replace(/\{file:([^}]+)\}/g, (_, filePath) => {
-		const absolutePath = path.isAbsolute(filePath) ? filePath : path.join(cwd, filePath);
-		try {
-			return fs.readFileSync(absolutePath, "utf8");
-		} catch {
-			return "";
+	let i = 0;
+	while (i < value.length) {
+		if (value[i] !== "{") {
+			i++;
+			continue;
 		}
-	});
 
-	return resolved;
+		// Found opening brace — find the matching closing brace
+		let depth = 0;
+		let j = i;
+		while (j < value.length) {
+			if (value[j] === "{") {
+				depth++;
+			} else if (value[j] === "}") {
+				depth--;
+				if (depth === 0) break;
+			}
+			j++;
+		}
+		if (depth !== 0) break; // unmatched brace, stop processing
+
+		const inner = value.slice(i + 1, j);
+		const colonIdx = inner.indexOf(":");
+		if (colonIdx !== -1) {
+			const prefix = inner.slice(0, colonIdx);
+			const suffix = inner.slice(colonIdx + 1);
+			if (prefix === "env") {
+				markers.push({
+					start: i,
+					end: j + 1,
+					promise: Promise.resolve(process.env[suffix] ?? ""),
+				});
+			} else if (prefix === "file") {
+				// If suffix contains nested markers (e.g. {env:VAR}/path.txt), resolve them first
+				const resolvedSuffix = suffix.includes("{") ? await resolveSettingValue(suffix, cwd) : suffix;
+				const baseDir = path.resolve(cwd);
+				const absolutePath = path.isAbsolute(resolvedSuffix)
+					? path.resolve(resolvedSuffix)
+					: path.resolve(baseDir, resolvedSuffix);
+				// Reject path traversal: resolved path must be inside cwd
+				const isSafe = absolutePath === baseDir || absolutePath.startsWith(`${baseDir}${path.sep}`);
+				const promise = isSafe
+					? Bun.file(absolutePath)
+							.text()
+							.catch(() => "")
+					: Promise.resolve("");
+				markers.push({ start: i, end: j + 1, promise });
+			}
+		}
+		i = j + 1;
+	}
+
+	if (markers.length === 0) {
+		return value;
+	}
+
+	// Resolve all markers concurrently
+	const resolvedValues = await Promise.all(markers.map(m => m.promise));
+
+	// Reconstruct string with resolved values
+	let result = "";
+	let cursor = 0;
+	for (let k = 0; k < markers.length; k++) {
+		const { start, end } = markers[k]!;
+		result += value.substring(cursor, start);
+		result += resolvedValues[k]!;
+		cursor = end;
+	}
+	result += value.substring(cursor);
+	return result;
 }
 
 const OPENAI_REMOTE_COMPACTION_PRESERVE_KEY = "openaiRemoteCompaction";
@@ -583,11 +648,19 @@ function getPreservedOpenAiRemoteCompactionData(
 ): OpenAiRemoteCompactionPreserveData | undefined {
 	const candidate = preserveData?.[OPENAI_REMOTE_COMPACTION_PRESERVE_KEY];
 	if (!candidate || typeof candidate !== "object") return undefined;
-	const maybeData = candidate as { provider?: unknown; replacementHistory?: unknown; compactionItem?: unknown };
+	const maybeData = candidate as {
+		provider?: unknown;
+		replacementHistory?: unknown;
+		compactionItem?: unknown;
+	};
 	if (!Array.isArray(maybeData.replacementHistory)) return undefined;
 	const maybeItem = maybeData.compactionItem;
 	if (!maybeItem || typeof maybeItem !== "object") return undefined;
-	const compactionItem = maybeItem as { type?: unknown; encrypted_content?: unknown; summary?: unknown };
+	const compactionItem = maybeItem as {
+		type?: unknown;
+		encrypted_content?: unknown;
+		summary?: unknown;
+	};
 	const isClassicCompaction =
 		compactionItem.type === "compaction" && typeof compactionItem.encrypted_content === "string";
 	const isSummaryCompaction = compactionItem.type === "compaction_summary";
@@ -731,13 +804,19 @@ function buildOpenAiNativeHistory(
 			const contentBlocks: Array<Record<string, unknown>> = [];
 			if (typeof message.content === "string") {
 				if (message.content.trim().length > 0) {
-					contentBlocks.push({ type: "input_text", text: message.content.toWellFormed() });
+					contentBlocks.push({
+						type: "input_text",
+						text: message.content.toWellFormed(),
+					});
 				}
 			} else {
 				for (const block of message.content) {
 					if (block.type === "text") {
 						if (!block.text || block.text.trim().length === 0) continue;
-						contentBlocks.push({ type: "input_text", text: block.text.toWellFormed() });
+						contentBlocks.push({
+							type: "input_text",
+							text: block.text.toWellFormed(),
+						});
 						continue;
 					}
 					if (block.type === "image") {
@@ -750,7 +829,11 @@ function buildOpenAiNativeHistory(
 				}
 			}
 			if (contentBlocks.length > 0) {
-				input.push({ type: "message", role: message.role, content: contentBlocks });
+				input.push({
+					type: "message",
+					role: message.role,
+					content: contentBlocks,
+				});
 			}
 			msgIndex++;
 			continue;
@@ -804,7 +887,13 @@ function buildOpenAiNativeHistory(
 					input.push({
 						type: "message",
 						role: "assistant",
-						content: [{ type: "output_text", text: block.text.toWellFormed(), annotations: [] }],
+						content: [
+							{
+								type: "output_text",
+								text: block.text.toWellFormed(),
+								annotations: [],
+							},
+						],
 						status: "completed",
 						id: msgId,
 						phase: parsedSignature?.phase,
@@ -994,7 +1083,7 @@ export interface SummaryOptions {
 	summarizationPrompt?: string;
 	/** Override for the incremental update prompt (falls back to bundled prompt). */
 	updatePrompt?: string;
-};
+}
 
 export async function generateSummary(
 	currentMessages: AgentMessage[],
@@ -1013,9 +1102,9 @@ export async function generateSummary(
 	if (options?.promptOverride) {
 		basePrompt = options.promptOverride;
 	} else if (previousSummary) {
-		basePrompt = options?.updatePrompt ?? UPDATE_SUMMARIZATION_PROMPT;
+		basePrompt = options?.updatePrompt || UPDATE_SUMMARIZATION_PROMPT;
 	} else {
-		basePrompt = options?.summarizationPrompt ?? SUMMARIZATION_PROMPT;
+		basePrompt = options?.summarizationPrompt || SUMMARIZATION_PROMPT;
 	}
 	if (customInstructions) {
 		basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
@@ -1052,8 +1141,17 @@ export async function generateSummary(
 
 	const response = await completeSimple(
 		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		{ maxTokens, signal, apiKey, reasoning: Effort.High, initiatorOverride: options?.initiatorOverride },
+		{
+			systemPrompt: SUMMARIZATION_SYSTEM_PROMPT,
+			messages: summarizationMessages,
+		},
+		{
+			maxTokens,
+			signal,
+			apiKey,
+			reasoning: Effort.High,
+			initiatorOverride: options?.initiatorOverride,
+		},
 	);
 
 	if (response.stopReason === "error") {
@@ -1100,9 +1198,21 @@ async function generateShortSummary(
 		model,
 		{
 			systemPrompt: SUMMARIZATION_SYSTEM_PROMPT,
-			messages: [{ role: "user", content: [{ type: "text", text: promptText }], timestamp: Date.now() }],
+			messages: [
+				{
+					role: "user",
+					content: [{ type: "text", text: promptText }],
+					timestamp: Date.now(),
+				},
+			],
 		},
-		{ maxTokens, signal, apiKey, reasoning: Effort.High, initiatorOverride: options?.initiatorOverride },
+		{
+			maxTokens,
+			signal,
+			apiKey,
+			reasoning: Effort.High,
+			initiatorOverride: options?.initiatorOverride,
+		},
 	);
 
 	if (response.stopReason === "error") {
@@ -1144,7 +1254,8 @@ export interface CompactionPreparation {
 }
 
 export function prepareCompaction(
-	pathEntries: SessionEntry[],	settings: CompactionSettings,
+	pathEntries: SessionEntry[],
+	settings: CompactionSettings,
 	cwd: string,
 ): CompactionPreparation | undefined {
 	if (pathEntries.length > 0 && pathEntries[pathEntries.length - 1].type === "compaction") {
@@ -1286,10 +1397,10 @@ export async function compact(
 		remoteInstructions: options?.remoteInstructions,
 		initiatorOverride: options?.initiatorOverride,
 		summarizationPrompt: settings.summarizationPrompt
-			? resolveSettingValue(settings.summarizationPrompt, preparation.cwd)
+			? await resolveSettingValue(settings.summarizationPrompt, preparation.cwd)
 			: undefined,
 		updatePrompt: settings.updatePrompt
-			? resolveSettingValue(settings.updatePrompt, preparation.cwd)
+			? await resolveSettingValue(settings.updatePrompt, preparation.cwd)
 			: undefined,
 	};
 
@@ -1428,7 +1539,10 @@ async function generateTurnPrefixSummary(
 
 	const response = await completeSimple(
 		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
+		{
+			systemPrompt: SUMMARIZATION_SYSTEM_PROMPT,
+			messages: summarizationMessages,
+		},
 		{ maxTokens, signal, apiKey, reasoning: Effort.High, initiatorOverride },
 	);
 
